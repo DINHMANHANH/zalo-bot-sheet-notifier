@@ -1,0 +1,19 @@
+{
+  "name": "zalo-bot-sheet-notifier",
+  "version": "1.0.0",
+  "description": "Zalo Bot webhook + Google Sheet notifier",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "set:webhook": "node scripts/set-webhook.js",
+    "get:me": "node scripts/get-me.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0"
+  }
+}
