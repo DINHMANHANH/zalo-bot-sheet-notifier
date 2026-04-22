@@ -106,13 +106,7 @@ router.post("/notify-new-message", verifyInternalApiToken, async (req, res) => {
       });
     }
 
-    const message =
-      "🔔 Có tin nhắn mới trong Google Sheet\n" +
-      `🕒 Thời gian: ${time}\n` +
-      `👤 Người gửi: ${sender}\n` +
-      `📌 Dòng dữ liệu: ${row}\n` +
-      "📝 Nội dung:\n" +
-      content;
+    const message = String(content || "").trim();
 
     let sent = 0;
     let failed = 0;
