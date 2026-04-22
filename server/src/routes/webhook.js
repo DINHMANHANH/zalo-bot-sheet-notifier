@@ -1,90 +1,126 @@
 import express from "express";
 import { verifyZaloWebhookSecret } from "../middleware.js";
-import { appendIncomingBotMessage, markZaloUserInactive, upsertZaloUser } from "../services/googleSheets.js";
+import {
+  appendIncomingBotMessage,
+  markZaloUserInactive,
+  upsertZaloUser
+} from "../services/googleSheets.js";
 import { sendMessage } from "../services/zaloBot.js";
-import { normalizeVietnameseText, safeJsonStringify } from "../utils.js";
+import {
+  isCancelCommand,
+  isRegisterCommand,
+  normalizeVietnameseText,
+  safeJsonStringify
+} from "../utils.js";
 
 const router = express.Router();
 
 function extractZaloEvent(body) {
   const result = body?.result || {};
-  const message = result?.message || {};
+  const message = result?.message || body?.message || {};
   const chat = message?.chat || {};
   const from = message?.from || {};
 
   return {
-    eventName: result?.event_name || "",
+    eventName: result?.event_name || body?.event_name || "",
     message,
     chatId: chat?.id || from?.id || "",
     chatType: chat?.chat_type || "",
-    displayName: from?.display_name || "",
-    text: message?.text || ""
+    displayName: from?.display_name || from?.name || "",
+    text: message?.text || message?.content || body?.text || ""
   };
 }
 
 router.post("/zalo-bot", verifyZaloWebhookSecret, async (req, res) => {
-  res.json({ ok: true, message: "received" });
+  res.json({
+    ok: true,
+    message: "received"
+  });
 
   const event = extractZaloEvent(req.body);
   const normalized = normalizeVietnameseText(event.text);
 
+  console.log("[WEBHOOK] Received:", {
+    eventName: event.eventName,
+    chatId: event.chatId,
+    chatType: event.chatType,
+    displayName: event.displayName,
+    text: event.text,
+    normalized
+  });
+
   try {
     if (!event.chatId) {
-      console.warn("Webhook không có chatId:", safeJsonStringify(req.body));
+      console.warn("[WEBHOOK] Không có chatId:", safeJsonStringify(req.body));
       return;
     }
 
-    if (event.eventName !== "message.text.received") {
-      await sendMessage(event.chatId, "Bot đã nhận sự kiện, nhưng hiện chỉ xử lý tin nhắn văn bản. Anh/chị vui lòng nhắn: Đăng ký");
+    if (event.eventName && event.eventName !== "message.text.received") {
+      console.log("[WEBHOOK] Bỏ qua event không phải text:", event.eventName);
       return;
     }
 
-    if (["dang ky", "/start", "start", "bat dau", "dk"].includes(normalized)) {
+    if (isRegisterCommand(event.text)) {
+      console.log("[WEBHOOK] Nhận lệnh đăng ký:", event.chatId);
+
       await upsertZaloUser({
         chatId: event.chatId,
-        displayName: event.displayName,
-        chatType: event.chatType,
+        displayName: event.displayName || "Người dùng Zalo",
+        chatType: event.chatType || "PRIVATE",
         status: "ACTIVE",
         note: "Đăng ký từ Zalo Bot"
       });
 
       await sendMessage(
         event.chatId,
-        `✅ Đã đăng ký nhận thông báo thành công.\n\nKhi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.\n\nĐể hủy, nhắn: Hủy`
+        "✅ Đã đăng ký nhận thông báo thành công.\n\nKhi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.\n\nĐể hủy, nhắn: Hủy"
       );
+
       return;
     }
 
-    if (["huy", "huy thong bao", "tat thong bao", "stop", "/stop"].includes(normalized)) {
+    if (isCancelCommand(event.text)) {
+      console.log("[WEBHOOK] Nhận lệnh hủy:", event.chatId);
+
       await markZaloUserInactive({
         chatId: event.chatId,
-        displayName: event.displayName,
-        chatType: event.chatType
+        displayName: event.displayName || "Người dùng Zalo",
+        chatType: event.chatType || "PRIVATE"
       });
 
-      await sendMessage(event.chatId, "✅ Đã hủy nhận thông báo. Để bật lại, nhắn: Đăng ký");
+      await sendMessage(
+        event.chatId,
+        "✅ Đã hủy nhận thông báo. Để bật lại, nhắn: Đăng ký"
+      );
+
       return;
     }
+
+    console.log("[WEBHOOK] Tin nhắn thường, lưu vào TinNhan:", event.text);
 
     await appendIncomingBotMessage({
       chatId: event.chatId,
-      displayName: event.displayName,
-      chatType: event.chatType,
+      displayName: event.displayName || "Người dùng Zalo",
+      chatType: event.chatType || "PRIVATE",
       text: event.text
     });
 
     await sendMessage(
       event.chatId,
-      `Tôi đã nhận tin nhắn của anh/chị.\n\nĐể nhận thông báo từ Google Sheet, nhắn: Đăng ký\nĐể hủy nhận thông báo, nhắn: Hủy`
+      "Tôi đã nhận tin nhắn của anh/chị.\n\nĐể nhận thông báo từ Google Sheet, nhắn: Đăng ký\nĐể hủy nhận thông báo, nhắn: Hủy"
     );
   } catch (err) {
-    console.error("Lỗi xử lý webhook:", err);
+    console.error("[WEBHOOK] Lỗi xử lý webhook:", err);
+
     try {
       if (event.chatId) {
-        await sendMessage(event.chatId, `⚠️ Bot gặp lỗi khi xử lý yêu cầu: ${err.message}`);
+        await sendMessage(
+          event.chatId,
+          `⚠️ Bot gặp lỗi khi xử lý yêu cầu: ${err.message}`
+        );
       }
     } catch (sendErr) {
-      console.error("Không gửi được tin báo lỗi về Zalo:", sendErr);
+      console.error("[WEBHOOK] Không gửi được tin báo lỗi về Zalo:", sendErr);
     }
   }
 });

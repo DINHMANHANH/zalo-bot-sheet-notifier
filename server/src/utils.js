@@ -16,8 +16,39 @@ export function normalizeVietnameseText(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/đ/g, "d")
     .replace(/Đ/g, "D")
+    .replace(/[^\w\s/]/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+export function isRegisterCommand(value) {
+  const text = normalizeVietnameseText(value);
+
+  return (
+    text === "dang ky" ||
+    text === "dang ki" ||
+    text === "dk" ||
+    text === "/start" ||
+    text === "start" ||
+    text === "bat dau" ||
+    text.includes("dang ky") ||
+    text.includes("dang ki")
+  );
+}
+
+export function isCancelCommand(value) {
+  const text = normalizeVietnameseText(value);
+
+  return (
+    text === "huy" ||
+    text === "huy thong bao" ||
+    text === "tat thong bao" ||
+    text === "stop" ||
+    text === "/stop" ||
+    text.includes("huy thong bao") ||
+    text.includes("tat thong bao")
+  );
 }
 
 export function safeJsonStringify(value) {
@@ -38,5 +69,6 @@ export function chunkText(text, maxLength = 1900) {
     chunks.push(input.slice(start, start + maxLength));
     start += maxLength;
   }
+
   return chunks;
 }
