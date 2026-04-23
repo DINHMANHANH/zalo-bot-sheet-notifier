@@ -229,17 +229,62 @@ export function formatDocumentHistoryMessage(code, items) {
     return `❌ Không tìm thấy lịch sử xử lý cho mã văn bản: ${normalizedCode}`;
   }
 
-  const lines = [`📄 Lịch sử xử lý văn bản: ${normalizedCode}`, ""];
+  const firstTrichYeu =
+    items.find((item) => String(item.trichYeu || "").trim())?.trichYeu || "";
+
+  const lines = [
+    "📄 LỊCH SỬ XỬ LÝ VĂN BẢN",
+    `Mã văn bản: ${normalizedCode}`
+  ];
+
+  if (firstTrichYeu) {
+    lines.push(`📝 Trích yếu: ${firstTrichYeu}`);
+  }
+
+  lines.push("");
 
   items.forEach((item, index) => {
-    lines.push(`${index + 1}. ${item.action || "KHÔNG RÕ"}`);
-    if (item.time) lines.push(`- Thời gian: ${item.time}`);
-    if (item.actor) lines.push(`- Người thực hiện: ${item.actor}`);
-    if (item.assignee) lines.push(`- Người nhận xử lý: ${item.assignee}`);
-    if (item.trichYeu) lines.push(`- Trích yếu: ${item.trichYeu}`);
-    if (item.detail) lines.push(`- Nội dung/Lý do: ${item.detail}`);
+    const action = String(item.action || "").trim().toUpperCase();
+    const time = String(item.time || "").trim();
+    const actor = String(item.actor || "").trim();
+    const assignee = String(item.assignee || "").trim();
+    const detail = String(item.detail || "").trim();
+
+    lines.push(`${index + 1}. ${action || "KHÔNG RÕ"}`);
+
+    if (time) {
+      lines.push(`🕒 Thời gian: ${time}`);
+    }
+
+    if (action === "TIẾP NHẬN") {
+      if (actor) {
+        lines.push(`👤 Người thực hiện: ${actor}`);
+      }
+    } else if (action === "CHUYỂN") {
+      if (assignee) {
+        lines.push(`➡️ Người nhận xử lý: ${assignee}`);
+      }
+    } else if (action === "TRẢ LẠI") {
+      if (actor) {
+        lines.push(`👤 Người thực hiện: ${actor}`);
+      }
+      if (detail) {
+        lines.push(`💬 Lý do: ${detail}`);
+      }
+    } else {
+      if (actor) {
+        lines.push(`👤 Người thực hiện: ${actor}`);
+      }
+      if (assignee) {
+        lines.push(`➡️ Người nhận xử lý: ${assignee}`);
+      }
+      if (detail) {
+        lines.push(`💬 Nội dung: ${detail}`);
+      }
+    }
+
     lines.push("");
   });
 
-  return lines.join("").trim();
+  return lines.join("\n").trim();
 }
