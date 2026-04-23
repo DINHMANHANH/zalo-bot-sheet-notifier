@@ -241,6 +241,5 @@ export function formatDocumentHistoryMessage(code, items) {
     lines.push("");
   });
 
-  return lines.join("
-").trim();
+  return lines.join("").trim();
 }

@@ -27,8 +27,7 @@ export const config = {
 
   googleSpreadsheetId: required("GOOGLE_SPREADSHEET_ID"),
   googleClientEmail: required("GOOGLE_CLIENT_EMAIL"),
-  googlePrivateKey: required("GOOGLE_PRIVATE_KEY").replace(/\n/g, "
-"),
+  googlePrivateKey: required("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n"),
 
   usersSheetName: optional("USERS_SHEET_NAME", "ZaloUsers"),
   messagesSheetName: optional("MESSAGES_SHEET_NAME", "TinNhan"),
