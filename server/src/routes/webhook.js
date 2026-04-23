@@ -2,6 +2,8 @@ import express from "express";
 import { verifyZaloWebhookSecret } from "../middleware.js";
 import {
   appendIncomingBotMessage,
+  formatDocumentHistoryMessage,
+  getDocumentHistoryByCode,
   markZaloUserInactive,
   upsertZaloUser
 } from "../services/googleSheets.js";
@@ -29,6 +31,25 @@ function extractZaloEvent(body) {
     displayName: from?.display_name || from?.name || "",
     text: message?.text || message?.content || body?.text || ""
   };
+}
+
+function normalizeDocumentCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+function extractDocumentCodeQuery(text) {
+  const raw = String(text || "").trim();
+
+  const direct = raw.match(/^(\d+\/[A-Za-z0-9._-]+)$/i);
+  if (direct) return normalizeDocumentCode(direct[1]);
+
+  const lookup = raw.match(/(?:tra\s*cuu|tra\s*cứu|mã|ma)?\s*(\d+\/[A-Za-z0-9._-]+)/i);
+  if (lookup) return normalizeDocumentCode(lookup[1]);
+
+  return "";
 }
 
 router.post("/zalo-bot", verifyZaloWebhookSecret, async (req, res) => {
@@ -73,7 +94,11 @@ router.post("/zalo-bot", verifyZaloWebhookSecret, async (req, res) => {
 
       await sendMessage(
         event.chatId,
-        "✅ Đã đăng ký nhận thông báo thành công.\n\nKhi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.\n\nĐể hủy, nhắn: Hủy"
+        "✅ Đã đăng ký nhận thông báo thành công.
+
+Khi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.
+
+Để hủy, nhắn: Hủy"
       );
 
       return;
@@ -96,6 +121,24 @@ router.post("/zalo-bot", verifyZaloWebhookSecret, async (req, res) => {
       return;
     }
 
+    const docCode = extractDocumentCodeQuery(event.text);
+    if (docCode) {
+      console.log("[WEBHOOK] Tra cứu lịch sử văn bản:", docCode);
+
+      const historyItems = await getDocumentHistoryByCode(docCode);
+      const replyText = formatDocumentHistoryMessage(docCode, historyItems);
+
+      await appendIncomingBotMessage({
+        chatId: event.chatId,
+        displayName: event.displayName || "Người dùng Zalo",
+        chatType: event.chatType || "PRIVATE",
+        text: `Tra cứu lịch sử văn bản: ${docCode}`
+      });
+
+      await sendMessage(event.chatId, replyText);
+      return;
+    }
+
     console.log("[WEBHOOK] Tin nhắn thường, lưu vào TinNhan:", event.text);
 
     await appendIncomingBotMessage({
@@ -107,7 +150,13 @@ router.post("/zalo-bot", verifyZaloWebhookSecret, async (req, res) => {
 
     await sendMessage(
       event.chatId,
-      "Tôi đã nhận tin nhắn của anh/chị.\n\nĐể nhận thông báo từ Google Sheet, nhắn: Đăng ký\nĐể hủy nhận thông báo, nhắn: Hủy"
+      "Tôi đã nhận tin nhắn của anh/chị.
+
+Nếu muốn tra cứu lịch sử văn bản, hãy nhắn đúng mã văn bản.
+Ví dụ: 2491/KTCN
+
+Để nhận thông báo từ Google Sheet, nhắn: Đăng ký
+Để hủy nhận thông báo, nhắn: Hủy"
     );
   } catch (err) {
     console.error("[WEBHOOK] Lỗi xử lý webhook:", err);

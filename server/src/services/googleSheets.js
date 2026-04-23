@@ -57,7 +57,7 @@ export async function ensureRequiredSheets() {
   const existing = new Set((meta.data.sheets || []).map(s => s.properties.title));
 
   const requests = [];
-  for (const title of [config.usersSheetName, config.messagesSheetName]) {
+  for (const title of [config.usersSheetName, config.messagesSheetName, config.historySheetName]) {
     if (!existing.has(title)) {
       requests.push({ addSheet: { properties: { title } } });
     }
@@ -76,9 +76,11 @@ export async function ensureRequiredSheets() {
 async function ensureHeaders() {
   const usersHeaders = ["STT", "Chat ID", "Tên người dùng", "Loại chat", "Thời gian đăng ký", "Trạng thái", "Lần cập nhật cuối", "Ghi chú"];
   const messagesHeaders = ["Thời gian", "Người gửi", "Nội dung", "Trạng thái gửi", "Thời gian gửi Zalo", "Ghi chú lỗi"];
+  const historyHeaders = ["Thời gian", "Mã văn bản", "Hành động", "Người thực hiện", "Người nhận xử lý", "Trích yếu", "Nội dung / Lý do", "Người nhận thông báo", "Dòng TinNhan"];
 
   const usersRange = `${quoteSheetName(config.usersSheetName)}!A1:H1`;
   const msgRange = `${quoteSheetName(config.messagesSheetName)}!A1:F1`;
+  const historyRange = `${quoteSheetName(config.historySheetName)}!A1:I1`;
 
   const usersCurrent = await getValues(usersRange);
   if (!usersCurrent.length || usersCurrent[0].filter(Boolean).length === 0) {
@@ -88,6 +90,11 @@ async function ensureHeaders() {
   const msgCurrent = await getValues(msgRange);
   if (!msgCurrent.length || msgCurrent[0].filter(Boolean).length === 0) {
     await updateValues(msgRange, [messagesHeaders]);
+  }
+
+  const historyCurrent = await getValues(historyRange);
+  if (!historyCurrent.length || historyCurrent[0].filter(Boolean).length === 0) {
+    await updateValues(historyRange, [historyHeaders]);
   }
 }
 
@@ -154,7 +161,10 @@ export async function getActiveZaloUsers() {
 export async function appendIncomingBotMessage({ chatId, displayName, chatType, text }) {
   await ensureRequiredSheets();
 
-  const message = `Tin nhắn từ Zalo Bot\nChat ID: ${chatId}\nLoại chat: ${chatType || ""}\nNội dung: ${text || ""}`;
+  const message = `Tin nhắn từ Zalo Bot
+Chat ID: ${chatId}
+Loại chat: ${chatType || ""}
+Nội dung: ${text || ""}`;
   await appendValues(`${quoteSheetName(config.messagesSheetName)}!A:F`, [[
     nowInVietnamText(),
     displayName || "Zalo Bot User",
@@ -163,4 +173,74 @@ export async function appendIncomingBotMessage({ chatId, displayName, chatType, 
     "",
     "Tin người dùng gửi vào bot, không phải tin cần phát đi"
   ]]);
+}
+
+function normalizeDocumentCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+function parseVietnamDateTime(value) {
+  const s = String(value || "").trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+  if (!m) return 0;
+
+  const [, dd, mm, yyyy, hh = "0", mi = "0", ss = "0"] = m;
+  return new Date(
+    Number(yyyy),
+    Number(mm) - 1,
+    Number(dd),
+    Number(hh),
+    Number(mi),
+    Number(ss)
+  ).getTime();
+}
+
+export async function getDocumentHistoryByCode(rawCode) {
+  await ensureRequiredSheets();
+
+  const code = normalizeDocumentCode(rawCode);
+  if (!code) return [];
+
+  const rows = await getValues(`${quoteSheetName(config.historySheetName)}!A2:I`);
+
+  return rows
+    .filter((row) => normalizeDocumentCode(row[1]) === code)
+    .map((row) => ({
+      time: row[0] || "",
+      maVanBan: row[1] || "",
+      action: row[2] || "",
+      actor: row[3] || "",
+      assignee: row[4] || "",
+      trichYeu: row[5] || "",
+      detail: row[6] || "",
+      notifiedUser: row[7] || "",
+      tinNhanRow: row[8] || ""
+    }))
+    .sort((a, b) => parseVietnamDateTime(a.time) - parseVietnamDateTime(b.time));
+}
+
+export function formatDocumentHistoryMessage(code, items) {
+  const normalizedCode = normalizeDocumentCode(code);
+
+  if (!items.length) {
+    return `❌ Không tìm thấy lịch sử xử lý cho mã văn bản: ${normalizedCode}`;
+  }
+
+  const lines = [`📄 Lịch sử xử lý văn bản: ${normalizedCode}`, ""];
+
+  items.forEach((item, index) => {
+    lines.push(`${index + 1}. ${item.action || "KHÔNG RÕ"}`);
+    if (item.time) lines.push(`- Thời gian: ${item.time}`);
+    if (item.actor) lines.push(`- Người thực hiện: ${item.actor}`);
+    if (item.assignee) lines.push(`- Người nhận xử lý: ${item.assignee}`);
+    if (item.trichYeu) lines.push(`- Trích yếu: ${item.trichYeu}`);
+    if (item.detail) lines.push(`- Nội dung/Lý do: ${item.detail}`);
+    lines.push("");
+  });
+
+  return lines.join("
+").trim();
 }
