@@ -156,7 +156,7 @@ Khi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.
 Nếu muốn tra cứu lịch sử văn bản, hãy nhắn đúng mã văn bản.
 Ví dụ: 2491/KTCN
 
-Để nhận thông báo từ Google Sheet, nhắn: Đăng ký
+Để nhận thông báo, nhắn: Đăng ký
 Để hủy nhận thông báo, nhắn: Hủy`
     );
   } catch (err) {
