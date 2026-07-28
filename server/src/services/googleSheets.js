@@ -176,6 +176,16 @@ async function ensureHeaders() {
   }
 }
 
+/**
+ * Chỉ thêm người dùng mới.
+ *
+ * Chat ID đã tồn tại:
+ * - Không cập nhật tên
+ * - Không cập nhật loại chat
+ * - Không cập nhật trạng thái
+ * - Không cập nhật thời gian
+ * - Không cập nhật ghi chú
+ */
 export async function upsertZaloUser({
   chatId,
   displayName,
@@ -195,45 +205,31 @@ export async function upsertZaloUser({
     `${quoteSheetName(config.usersSheetName)}!A2:H`;
 
   const rows = await getValues(range);
-  const nowText = nowInVietnamText();
+
+  const normalizedChatId =
+    String(chatId).trim();
 
   const rowIndex = rows.findIndex(
     (row) =>
       String(row[1] || "").trim() ===
-      String(chatId).trim()
+      normalizedChatId
   );
 
+  // Chat ID đã có: không ghi đè hay cập nhật gì.
   if (rowIndex >= 0) {
-    const sheetRow = rowIndex + 2;
-    const oldRow = rows[rowIndex];
-
-    const newRow = [
-      oldRow[0] || rowIndex + 1,
-      String(chatId),
-      displayName || oldRow[2] || "",
-      chatType || oldRow[3] || "",
-      oldRow[4] || nowText,
-      status,
-      nowText,
-      note || oldRow[7] || ""
-    ];
-
-    await updateValues(
-      `${quoteSheetName(config.usersSheetName)}!A${sheetRow}:H${sheetRow}`,
-      [newRow]
-    );
-
     return {
-      action: "updated",
-      row: sheetRow
+      action: "exists",
+      row: rowIndex + 2,
+      chatId: normalizedChatId
     };
   }
 
+  const nowText = nowInVietnamText();
   const newStt = rows.length + 1;
 
   const newRow = [
     newStt,
-    String(chatId),
+    normalizedChatId,
     displayName || "",
     chatType || "",
     nowText,
@@ -249,22 +245,91 @@ export async function upsertZaloUser({
 
   return {
     action: "inserted",
-    row: rows.length + 2
+    row: rows.length + 2,
+    chatId: normalizedChatId
   };
 }
 
+/**
+ * Lệnh Hủy vẫn cần cập nhật trạng thái thành INACTIVE.
+ * Vì vậy hàm này xử lý riêng, không dùng quy tắc "đã có thì bỏ qua".
+ */
 export async function markZaloUserInactive({
   chatId,
   displayName,
   chatType
 }) {
-  return upsertZaloUser({
-    chatId,
-    displayName,
-    chatType,
-    status: "INACTIVE",
-    note: "Người dùng đã hủy nhận thông báo"
-  });
+  if (!chatId) {
+    throw new Error(
+      "Thiếu chatId để hủy nhận thông báo."
+    );
+  }
+
+  await ensureRequiredSheets();
+
+  const range =
+    `${quoteSheetName(config.usersSheetName)}!A2:H`;
+
+  const rows = await getValues(range);
+  const normalizedChatId = String(chatId).trim();
+  const nowText = nowInVietnamText();
+
+  const rowIndex = rows.findIndex(
+    (row) =>
+      String(row[1] || "").trim() ===
+      normalizedChatId
+  );
+
+  if (rowIndex >= 0) {
+    const sheetRow = rowIndex + 2;
+    const oldRow = rows[rowIndex];
+
+    const updatedRow = [
+      oldRow[0] || rowIndex + 1,
+      normalizedChatId,
+      oldRow[2] || displayName || "",
+      oldRow[3] || chatType || "",
+      oldRow[4] || nowText,
+      "INACTIVE",
+      nowText,
+      "Người dùng đã hủy nhận thông báo"
+    ];
+
+    await updateValues(
+      `${quoteSheetName(config.usersSheetName)}!A${sheetRow}:H${sheetRow}`,
+      [updatedRow]
+    );
+
+    return {
+      action: "inactive",
+      row: sheetRow,
+      chatId: normalizedChatId
+    };
+  }
+
+  const newStt = rows.length + 1;
+
+  const newRow = [
+    newStt,
+    normalizedChatId,
+    displayName || "",
+    chatType || "",
+    nowText,
+    "INACTIVE",
+    nowText,
+    "Người dùng đã hủy nhận thông báo"
+  ];
+
+  await appendValues(
+    `${quoteSheetName(config.usersSheetName)}!A:H`,
+    [newRow]
+  );
+
+  return {
+    action: "inserted-inactive",
+    row: rows.length + 2,
+    chatId: normalizedChatId
+  };
 }
 
 export async function getActiveZaloUsers() {
@@ -358,9 +423,7 @@ function parseVietnamDateTime(value) {
 }
 
 /**
- * Tra cứu trong sheet "Theo dõi chuyển văn bản".
- *
- * Có thể tìm bằng:
+ * Tra cứu trong sheet "Theo dõi chuyển văn bản":
  * - Cột E: Mã văn bản
  * - Cột F: Số đến/đi
  * - Cột G: Số ký hiệu
@@ -368,13 +431,15 @@ function parseVietnamDateTime(value) {
 export async function getDocumentHistoryByCode(rawCode) {
   await ensureRequiredSheets();
 
-  const searchCode = normalizeDocumentCode(rawCode);
+  const searchCode =
+    normalizeDocumentCode(rawCode);
 
   if (!searchCode) {
     return [];
   }
 
-  const trackingSheetName = "Theo dõi chuyển văn bản";
+  const trackingSheetName =
+    "Theo dõi chuyển văn bản";
 
   const rows = await getValues(
     `${quoteSheetName(trackingSheetName)}!A2:Z`
