@@ -17,6 +17,9 @@ import {
 
 const router = express.Router();
 
+/**
+ * Tách dữ liệu cần thiết từ payload Zalo Bot.
+ */
 function extractZaloEvent(body) {
   const result = body?.result || {};
   const message = result?.message || body?.message || {};
@@ -25,14 +28,20 @@ function extractZaloEvent(body) {
 
   return {
     eventName: result?.event_name || body?.event_name || "",
-    message,
-    chatId: chat?.id || from?.id || "",
-    chatType: chat?.chat_type || "",
-    displayName: from?.display_name || from?.name || "",
-    text: message?.text || message?.content || body?.text || ""
+    chatId: String(chat?.id || from?.id || "").trim(),
+    chatType: String(chat?.chat_type || "PRIVATE").trim(),
+    displayName: String(
+      from?.display_name || from?.name || "Người dùng Zalo"
+    ).trim(),
+    text: String(
+      message?.text || message?.content || body?.text || ""
+    ).trim()
   };
 }
 
+/**
+ * Chuẩn hóa mã tra cứu.
+ */
 function normalizeDocumentCode(value) {
   return String(value || "")
     .trim()
@@ -40,25 +49,48 @@ function normalizeDocumentCode(value) {
     .replace(/\s+/g, "");
 }
 
+/**
+ * Nhận các dạng:
+ * 123
+ * 2491/KTCN
+ * tra cứu 123
+ * tra cứu 2491/KTCN
+ * mã 123
+ * mã 2491/KTCN
+ */
 function extractDocumentCodeQuery(text) {
   const raw = String(text || "").trim();
 
-  const direct = raw.match(/^(\d+\/[A-Za-z0-9._-]+)$/i);
-  if (direct) {
-    return normalizeDocumentCode(direct[1]);
+  if (!raw) {
+    return "";
   }
 
-  const lookup = raw.match(
-    /(?:tra\s*cuu|tra\s*cứu|mã|ma)?\s*(\d+\/[A-Za-z0-9._-]+)/i
+  const normalizedText = normalizeVietnameseText(raw);
+
+  // Người dùng chỉ nhập mã: 123 hoặc 2491/KTCN
+  const directMatch = raw.match(
+    /^(\d+(?:\/[A-Za-z0-9._-]+)?)$/i
   );
 
-  if (lookup) {
-    return normalizeDocumentCode(lookup[1]);
+  if (directMatch) {
+    return normalizeDocumentCode(directMatch[1]);
+  }
+
+  // Người dùng nhập: tra cứu 123, mã 123, tra cứu 2491/KTCN...
+  const commandMatch = normalizedText.match(
+    /^(?:tra\s*cuu|ma)\s*:?\s*(\d+(?:\/[a-z0-9._-]+)?)$/i
+  );
+
+  if (commandMatch) {
+    return normalizeDocumentCode(commandMatch[1]);
   }
 
   return "";
 }
 
+/**
+ * Gửi tin nhưng không làm hỏng toàn bộ webhook khi Zalo API lỗi.
+ */
 async function safeSendMessage(chatId, text) {
   try {
     await sendMessage(chatId, text);
@@ -77,7 +109,7 @@ router.post(
   "/zalo-bot",
   verifyZaloWebhookSecret,
   async (req, res) => {
-    // Phản hồi ngay để Zalo không chờ quá lâu.
+    // Trả HTTP 200 ngay để Zalo không gọi lại do timeout.
     res.status(200).json({
       ok: true,
       message: "received"
@@ -109,32 +141,30 @@ router.post(
         event.eventName !== "message.text.received"
       ) {
         console.log(
-          "[WEBHOOK] Bỏ qua event không phải text:",
+          "[WEBHOOK] Bỏ qua event không phải tin nhắn chữ:",
           event.eventName
         );
         return;
       }
 
+      if (!event.text) {
+        console.log("[WEBHOOK] Tin nhắn không có nội dung chữ.");
+        return;
+      }
+
       const userData = {
         chatId: event.chatId,
-        displayName:
-          event.displayName || "Người dùng Zalo",
+        displayName: event.displayName,
         chatType: event.chatType || "PRIVATE"
       };
 
       /*
        * LỆNH HỦY
-       * Phải xử lý trước phần tự động ACTIVE.
        */
       if (isCancelCommand(event.text)) {
-        console.log(
-          "[WEBHOOK] Nhận lệnh hủy:",
-          event.chatId
-        );
+        console.log("[WEBHOOK] Nhận lệnh hủy:", event.chatId);
 
-        const result = await markZaloUserInactive(
-          userData
-        );
+        const result = await markZaloUserInactive(userData);
 
         console.log(
           "[WEBHOOK] Đã chuyển người dùng sang INACTIVE:",
@@ -150,7 +180,7 @@ router.post(
       }
 
       /*
-       * MỌI NGƯỜI DÙNG GỬI TIN ĐỀU ĐƯỢC LƯU CHAT ID.
+       * TỰ ĐỘNG LƯU CHAT ID KHI NGƯỜI DÙNG GỬI TIN.
        */
       const userResult = await upsertZaloUser({
         ...userData,
@@ -164,8 +194,8 @@ router.post(
         "[WEBHOOK] Đã lưu/cập nhật người dùng vào ID-Zalo:",
         {
           chatId: event.chatId,
-          displayName: userData.displayName,
-          chatType: userData.chatType,
+          displayName: event.displayName,
+          chatType: event.chatType,
           result: userResult
         }
       );
@@ -183,7 +213,7 @@ router.post(
           event.chatId,
           `✅ Đã đăng ký nhận thông báo thành công.
 
-Khi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.
+Khi có thông báo mới, bot sẽ gửi tại đây.
 
 Để hủy, nhắn: Hủy`
         );
@@ -192,10 +222,9 @@ Khi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.
       }
 
       /*
-       * TRA CỨU LỊCH SỬ VĂN BẢN
+       * TRA CỨU VĂN BẢN
        */
-      const docCode =
-        extractDocumentCodeQuery(event.text);
+      const docCode = extractDocumentCodeQuery(event.text);
 
       if (docCode) {
         console.log(
@@ -214,8 +243,8 @@ Khi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.
 
         await appendIncomingBotMessage({
           chatId: event.chatId,
-          displayName: userData.displayName,
-          chatType: userData.chatType,
+          displayName: event.displayName,
+          chatType: event.chatType,
           text: `Tra cứu lịch sử văn bản: ${docCode}`
         });
 
@@ -237,8 +266,8 @@ Khi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.
 
       await appendIncomingBotMessage({
         chatId: event.chatId,
-        displayName: userData.displayName,
-        chatType: userData.chatType,
+        displayName: event.displayName,
+        chatType: event.chatType,
         text: event.text
       });
 
@@ -246,8 +275,11 @@ Khi Google Sheet có tin nhắn mới, bot sẽ gửi thông báo tại đây.
         event.chatId,
         `Tôi đã nhận tin nhắn của anh/chị.
 
-Nếu muốn tra cứu lịch sử văn bản, hãy nhắn đúng mã văn bản.
-Ví dụ: 2491/KTCN
+Để tra cứu văn bản, nhập mã văn bản.
+Ví dụ:
+123
+hoặc
+2491/KTCN
 
 Để nhận thông báo, nhắn: Đăng ký
 Để hủy nhận thông báo, nhắn: Hủy`
